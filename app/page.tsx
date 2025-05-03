@@ -1,4 +1,3 @@
-// pages/index.tsx (or app/page.tsx)
 "use client";
 import React, { useRef, useState, useEffect } from "react";
 import { motion } from "framer-motion";
@@ -18,9 +17,10 @@ export default function DrawingApp() {
   const [activeLayer, setActiveLayer] = useState(0);
   const [history, setHistory] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
-  const [activeButton, setActiveButton] = useState(null);
+  const [activeButton, setActiveButton] = useState<string | null>(null);
+  const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null);
 
-  const handleButtonClick = (buttonName: any) => {
+  const handleButtonClick = (buttonName: string) => {
     setActiveButton(buttonName);
     if (buttonName === "undo") undo();
     else if (buttonName === "redo") redo();
@@ -55,20 +55,25 @@ export default function DrawingApp() {
       ctx.drawImage(img, 0, 0);
     };
   };
-  const startDrawing = (e: React.MouseEvent) => {
-    const { offsetX, offsetY } = e.nativeEvent;
+
+  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    const { offsetX, offsetY } = getEventPos(e);
     const ctx = ctxRef.current;
     if (!ctx) return;
-    ctx.beginPath();
-    ctx.moveTo(offsetX, offsetY);
+    if (tool === "brush") {
+      ctx.beginPath();
+      ctx.moveTo(offsetX, offsetY);
+    }
+    setStartPos({ x: offsetX, y: offsetY });
     setIsDrawing(true);
   };
 
-  const draw = (e: React.MouseEvent) => {
-    if (!isDrawing) return;
-    const { offsetX, offsetY } = e.nativeEvent;
+  const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isDrawing || !startPos) return;
+    const { offsetX, offsetY } = getEventPos(e);
     const ctx = ctxRef.current;
     if (!ctx) return;
+
     if (tool === "brush") {
       ctx.lineTo(offsetX, offsetY);
       ctx.stroke();
@@ -77,10 +82,28 @@ export default function DrawingApp() {
     }
   };
 
-  const endDrawing = () => {
-    if (!isDrawing) return;
+  const endDrawing = (e?: React.MouseEvent | React.TouchEvent) => {
+    const ctx = ctxRef.current;
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!ctx || !canvas) return;
+    if (!isDrawing || !startPos) return;
+
+    if (tool === "rectangle" || tool === "circle") {
+      const { offsetX, offsetY } = e ? getEventPos(e) : { offsetX: startPos.x, offsetY: startPos.y };
+      const { x, y } = startPos;
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = brushSize;
+
+      if (tool === "rectangle") {
+        ctx.strokeRect(x, y, offsetX - x, offsetY - y);
+      } else if (tool === "circle") {
+        const radius = Math.hypot(offsetX - x, offsetY - y);
+        ctx.arc(x, y, radius, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
+
     const newLayers = [...layers];
     newLayers[activeLayer].data = canvas.toDataURL();
     setLayers(newLayers);
@@ -88,6 +111,7 @@ export default function DrawingApp() {
     setHistory([...history, canvas.toDataURL()]);
     setRedoStack([]);
     setIsDrawing(false);
+    setStartPos(null);
   };
 
   const handleToolChange = (t: string) => {
@@ -164,6 +188,7 @@ export default function DrawingApp() {
     link.href = canvas.toDataURL();
     link.click();
   };
+
   const addLayer = () => {
     const newId = layers.length + 1;
     setLayers([...layers, { id: newId, name: `Layer ${newId}`, data: "" }]);
@@ -172,6 +197,35 @@ export default function DrawingApp() {
   const selectLayer = (index: number) => {
     setActiveLayer(index);
   };
+
+  const getEventPos = (e?: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { offsetX: 0, offsetY: 0 };
+    const rect = canvas.getBoundingClientRect();
+  
+    if (!e) {
+      // fallback if no event provided
+      return startPos ? { offsetX: startPos.x, offsetY: startPos.y } : { offsetX: 0, offsetY: 0 };
+    }
+  
+    let clientX: number, clientY: number;
+    if ("touches" in e && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else if ("clientX" in e) {
+      clientX = (e as React.MouseEvent).clientX;
+      clientY = (e as React.MouseEvent).clientY;
+    } else {
+      // fallback
+      return { offsetX: 0, offsetY: 0 };
+    }
+  
+    return {
+      offsetX: clientX - rect.left,
+      offsetY: clientY - rect.top,
+    };
+  };
+  
 
   return (
     <div className="flex flex-col h-screen bg-gray-100 text-gray-900">
@@ -187,51 +241,26 @@ export default function DrawingApp() {
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <motion.div
-          initial={{ x: 0 }}
-          animate={{ x: 0 }}
-          className="w-16 bg-white border-r flex flex-col items-center py-4 space-y-4"
-        >
-          {tools.map((t) => (
+        {/* Desktop Sidebar */}
+        <div className="sm:flex hidden w-14 bg-white border-r flex-col items-center py-3 space-y-3">
+          {[...tools, "undo", "redo", "clear"].map((btn) => (
             <button
-              key={t}
-              className={`w-10 h-10 rounded flex items-center justify-center text-2xl ${activeButton === t ? "bg-indigo-500 text-white" : "bg-transparent text-gray-700"
-                }`}
-              onClick={() => handleButtonClick(t)}
+              key={btn}
+              onClick={() => handleButtonClick(btn)}
+              className={`w-9 h-9 rounded flex items-center justify-center text-xl ${
+                activeButton === btn ? "bg-indigo-500 text-white" : "bg-transparent text-gray-700"
+              }`}
             >
-              {t === "brush" && "🖌️"}
-              {t === "rectangle" && <span className="text-3xl">▭</span>}
-              {t === "circle" && "⚪"}
-              {t === "eraser" && "🧽"}
+              {btn === "brush" && "🖌️"}
+              {btn === "rectangle" && <span className="text-2xl">▭</span>}
+              {btn === "circle" && "⚪"}
+              {btn === "eraser" && "🧽"}
+              {btn === "undo" && "↺"}
+              {btn === "redo" && "↻"}
+              {btn === "clear" && "🗑️"}
             </button>
           ))}
-
-          <button
-            onClick={() => handleButtonClick("undo")}
-            className={`w-10 h-10 rounded flex items-center justify-center text-2xl ${activeButton === "undo" ? "bg-indigo-500 text-white" : "bg-transparent text-gray-700"
-              }`}
-          >
-            ↺
-          </button>
-
-          <button
-            onClick={() => handleButtonClick("redo")}
-            className={`w-10 h-10 rounded flex items-center justify-center text-2xl ${activeButton === "redo" ? "bg-indigo-500 text-white" : "bg-transparent text-gray-700"
-              }`}
-          >
-            ↻
-          </button>
-
-          <button
-            onClick={() => handleButtonClick("clear")}
-            className={`w-10 h-10 rounded flex items-center justify-center text-2xl ${activeButton === "clear" ? "bg-indigo-500 text-white" : "bg-transparent text-red-700"
-              }`}
-          >
-            🗑️
-          </button>
-
-        </motion.div>
+        </div>
 
         {/* Canvas Area */}
         <div className="flex-1 relative bg-white">
@@ -241,7 +270,10 @@ export default function DrawingApp() {
             onMouseMove={draw}
             onMouseUp={endDrawing}
             onMouseLeave={endDrawing}
-            className="w-full h-full cursor-crosshair"
+            onTouchStart={startDrawing}
+            onTouchMove={draw}
+            onTouchEnd={endDrawing}
+            className="w-full h-full cursor-crosshair touch-none"
           />
         </div>
 
@@ -253,8 +285,9 @@ export default function DrawingApp() {
               <button
                 key={layer.id}
                 onClick={() => selectLayer(index)}
-                className={`w-full text-left px-3 py-2 hover:bg-gray-200 ${index === activeLayer ? "bg-indigo-100 font-bold" : ""
-                  }`}
+                className={`w-full text-left px-3 py-2 hover:bg-gray-200 ${
+                  index === activeLayer ? "bg-indigo-100 font-bold" : ""
+                }`}
               >
                 {layer.name}
               </button>
@@ -269,16 +302,41 @@ export default function DrawingApp() {
         </div>
       </div>
 
+      {/* Mobile Bottom Toolbar */}
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around py-2 z-50">
+        {[...tools, "undo", "redo", "clear"].map((btn) => (
+          <button
+            key={btn}
+            onClick={() => handleButtonClick(btn)}
+            className={`flex flex-col items-center text-xs ${
+              activeButton === btn ? "text-indigo-600" : "text-gray-700"
+            }`}
+          >
+            <span className="text-xl">
+              {btn === "brush" && "🖌️"}
+              {btn === "rectangle" && <span className="text-2xl">▭</span>}
+              {btn === "circle" && "⚪"}
+              {btn === "eraser" && "🧽"}
+              {btn === "undo" && "↺"}
+              {btn === "redo" && "↻"}
+              {btn === "clear" && "🗑️"}
+            </span>
+            {btn}
+          </button>
+        ))}
+      </div>
+
       {/* Bottom Toolbar */}
-      <div className="p-3 bg-white border-t flex flex-wrap items-center gap-2 justify-between">
+      <div className="p-3 bg-white border-t flex flex-wrap items-center gap-2 justify-between sm:mb-0 mb-14">
         <div className="flex items-center gap-2">
-        <h1>Select color</h1>
+          <h1>Select color</h1>
           {colors.map((c) => (
             <button
               key={c}
               onClick={() => handleColorChange(c)}
-              className={`w-6 h-6 rounded-full border ${color === c ? "ring-2 ring-indigo-500" : ""
-                }`}
+              className={`w-6 h-6 rounded-full border ${
+                color === c ? "ring-2 ring-indigo-500" : ""
+              }`}
               style={{ backgroundColor: c }}
             />
           ))}
